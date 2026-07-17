@@ -1,102 +1,142 @@
 # Telegram Channel Backup
 
-Complete backup tool for Telegram channels using Telethon.
+Ferramenta para backup completo de canais do Telegram usando Telethon.
 
-## Requirements
+## Requisitos
 
 - Python 3.12+
-- Telegram API credentials ([my.telegram.org/apps](https://my.telegram.org/apps))
+- Credenciais de API do Telegram ([my.telegram.org/apps](https://my.telegram.org/apps))
 
-## Setup
+## Instalação
 
-1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Configuração
 
-2. Copy `.env.example` to `.env`:
+Copie o arquivo de exemplo e edite com seus dados:
 
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+cp .env.example .env
+```
 
-3. Edit `.env` with your credentials.
+### Variáveis do `.env`
 
-### How to get API_ID and API_HASH
+| Variável | Obrigatório | Descrição |
+|---|---|---|
+| `API_ID` | Sim | Seu API ID (my.telegram.org) |
+| `API_HASH` | Sim | Seu API Hash (my.telegram.org) |
+| `CHANNEL` | Sim | Username do canal (`@canal`) ou link de convite |
+| `OUTPUT_DIR` | Não | Pasta de saída (padrão: `downloads`) |
+| `CONCURRENT_DOWNLOADS` | Não | Downloads simultâneos (padrão: `5`) |
+| `SESSION_NAME` | Não | Nome do arquivo de sessão (padrão: `telegram_backup`) |
 
-1. Go to https://my.telegram.org/apps
-2. Log in with your Telegram account
-3. Create a new application
-4. Copy the `api_id` and `api_hash` values
+> Na primeira execução o Telegram solicitará seu número de telefone e código de verificação.
 
-## Usage
+## Como usar
 
-Run from the project root:
+Execute a partir da raiz do projeto:
 
 ```bash
 python backup/backup.py
 ```
 
-### Options
-
-| Argument | Description |
-|---|---|
-| `--only-media` | Download only media files |
-| `--only-text` | Save only text messages |
-| `--start-date YYYY-MM-DD` | Start date filter |
-| `--end-date YYYY-MM-DD` | End date filter |
-| `--media-type {photo,video,document,audio,gif,sticker,all}` | Filter by media type |
-| `--skip-existing` | Skip already downloaded files (uses MD5) |
-| `--no-sqlite` | Skip SQLite database creation |
-| `--no-resume` | Start a fresh backup (ignore checkpoint) |
-
-### Examples
+Ou diretamente da pasta `backup/`:
 
 ```bash
-# Full backup
+cd backup
+python backup.py
+```
+
+O script baixará todas as mensagens e mídias do canal, salvando na pasta definida em `OUTPUT_DIR`.
+
+## Opções
+
+| Argumento | Descrição |
+|---|---|
+| `--only-media` | Baixa apenas arquivos de mídia (ignora mensagens de texto) |
+| `--only-text` | Salva apenas mensagens de texto (ignora mídias) |
+| `--start-date YYYY-MM-DD` | Filtra mensagens a partir desta data |
+| `--end-date YYYY-MM-DD` | Filtra mensagens até esta data |
+| `--media-type {photo,video,document,audio,gif,sticker,all}` | Filtra por tipo de mídia |
+| `--skip-existing` | Pula arquivos já baixados (usando hash MD5) |
+| `--no-sqlite` | Não cria banco SQLite |
+| `--no-resume` | Ignora checkpoint anterior e recomeça do zero |
+
+## Exemplos
+
+### Backup completo
+
+```bash
 python backup/backup.py
+```
 
-# Only photos and videos
-python backup/backup.py --only-media --media-type photo
-python backup/backup.py --only-media --media-type video
+### Apenas fotos e vídeos de 2024
 
-# Specific date range
-python backup/backup.py --start-date 2024-01-01 --end-date 2024-12-31
+```bash
+python backup/backup.py \
+    --only-media \
+    --start-date 2024-01-01 \
+    --end-date 2024-12-31
+```
 
-# Skip already downloaded files
+### Apenas documentos PDF
+
+```bash
+python backup/backup.py --only-media --media-type document
+```
+
+### Apenas textos
+
+```bash
+python backup/backup.py --only-text
+```
+
+### Evitar redownload
+
+```bash
 python backup/backup.py --skip-existing
+```
 
-# Fresh backup (ignore previous progress)
+### Recomeçar do zero (ignorar progresso anterior)
+
+```bash
 python backup/backup.py --no-resume
 ```
 
-## Output Structure
+## Retomada automática
+
+O script salva o progresso no banco SQLite (`backup.db`). Se for interrompido (Ctrl+C, queda de conexão, etc.), basta executar novamente que ele continuará de onde parou.
+
+Para forçar o início do zero, use `--no-resume`.
+
+## Estrutura de saída
 
 ```
 downloads/
 ├── media/
-│   ├── photos/
-│   ├── videos/
-│   ├── documents/
-│   ├── audios/
-│   ├── gifs/
-│   ├── stickers/
-│   └── others/
-├── messages.json
-├── messages.csv
-├── backup.db
-└── log.txt
+│   ├── photos/          # Fotos e imagens
+│   ├── videos/          # Vídeos
+│   ├── documents/       # PDFs, arquivos compactados, etc.
+│   ├── audios/          # Áudios e músicas
+│   ├── gifs/            # GIFs
+│   ├── stickers/        # Stickers
+│   └── others/          # Outros tipos de mídia
+├── messages.json        # Metadados das mensagens (JSON)
+├── messages.csv         # Metadados das mensagens (CSV)
+├── backup.db            # Banco SQLite com metadados
+└── log.txt              # Log detalhado da execução
 ```
 
-## Features
+## Funcionalidades
 
-- Full channel backup (messages + all media types)
-- Resume support from last checkpoint
-- FloodWait handling with automatic retry
-- Configurable concurrent downloads
-- Export to JSON, CSV, and SQLite
-- MD5 hash deduplication
-- Date range and media type filters
-- Progress bar with tqdm
-- Detailed logging
+- Backup completo de mensagens e todos os tipos de mídia
+- Retomada automática de execuções interrompidas
+- Tratamento de FloodWait com espera automática
+- Downloads simultâneos (configurável)
+- Exportação em JSON, CSV e SQLite
+- Hash MD5 para evitar duplicatas
+- Filtros por data e tipo de mídia
+- Barra de progresso com tqdm
+- Logs detalhados
