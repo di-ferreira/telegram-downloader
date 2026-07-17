@@ -7,7 +7,7 @@ from datetime import datetime
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, ChannelInvalidError
-from telethon.tl.functions.channels import CreateChannelRequest, EditTitleRequest, EditAboutRequest
+from telethon.tl.functions.channels import CreateChannelRequest
 from telethon.tl.functions.account import UpdateUsernameRequest
 
 from config import API_ID, API_HASH, PHONE, SESSION_NAME
