@@ -207,48 +207,56 @@ async def run_restore(args):
             pbar.update(1)
             continue
 
-        try:
-            result = await restore_message(msg_data)
+        max_retries = 3
+        restored = False
+        for attempt in range(max_retries):
+            try:
+                result = await restore_message(msg_data)
 
-            if result:
-                novo_id = result.id if hasattr(result, "id") else None
-                db.save_progress(
-                    progress_conn,
-                    msg_id,
-                    novo_id=novo_id,
-                    data_envio=datetime.now().isoformat(),
-                )
-            else:
-                db.save_progress(
-                    progress_conn,
-                    msg_id,
-                    status="skipped",
-                    data_envio=datetime.now().isoformat(),
-                )
+                if result:
+                    novo_id = result.id if hasattr(result, "id") else None
+                    db.save_progress(
+                        progress_conn,
+                        msg_id,
+                        novo_id=novo_id,
+                        data_envio=datetime.now().isoformat(),
+                    )
+                else:
+                    db.save_progress(
+                        progress_conn,
+                        msg_id,
+                        status="skipped",
+                        data_envio=datetime.now().isoformat(),
+                    )
 
-            sent_count += 1
+                restored = True
+                sent_count += 1
+                break
 
-            if sent_count > 0 and sent_count % MENSAGENS_PARA_INTERVALO_LONGO == 0:
-                delay = random.uniform(*INTERVALO_LONGO)
-                log.info(f"Long pause: {delay:.0f}s after {sent_count} messages")
-                await asyncio.sleep(delay)
-            else:
-                delay = random.uniform(*INTERVALO_BASE)
-                await asyncio.sleep(delay)
+            except FloodWaitError as e:
+                wait = e.seconds
+                log.warning(f"FloodWait #{attempt+1}: waiting {wait}s ({wait/60:.1f}min)")
+                pbar.set_description(f"FloodWait {wait}s")
+                for _ in tqdm(range(wait), desc="Waiting", unit="s", leave=False):
+                    await asyncio.sleep(1)
+                pbar.set_description("Restoring")
 
-        except FloodWaitError as e:
-            wait = e.seconds
-            log.warning(f"FloodWait: waiting {wait}s ({wait/60:.1f}min)")
-            pbar.set_description(f"FloodWait {wait}s")
-            db.mark_error(progress_conn, msg_id, f"FloodWait {wait}s")
-            for _ in tqdm(range(wait), desc="Waiting", unit="s", leave=False):
-                await asyncio.sleep(1)
-            pbar.set_description("Restoring")
+            except Exception as e:
+                log.error(f"Error restoring msg {msg_id}: {e}")
+                db.mark_error(progress_conn, msg_id, str(e))
+                break
 
-        except Exception as e:
-            log.error(f"Error restoring msg {msg_id}: {e}")
-            db.mark_error(progress_conn, msg_id, str(e))
+        if not restored:
+            db.mark_error(progress_conn, msg_id, "Max retries exceeded")
             continue
+
+        if sent_count % MENSAGENS_PARA_INTERVALO_LONGO == 0:
+            delay = random.uniform(*INTERVALO_LONGO)
+            log.info(f"Long pause: {delay:.0f}s after {sent_count} messages")
+            await asyncio.sleep(delay)
+        else:
+            delay = random.uniform(*INTERVALO_BASE)
+            await asyncio.sleep(delay)
 
     pbar.close()
     db.close_progress(progress_conn)

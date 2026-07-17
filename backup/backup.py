@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import json
 import csv
 import asyncio
@@ -91,27 +92,26 @@ def get_media_category(media):
 def get_file_name(message, media, media_type):
     if not media:
         return None
+
+    text = message.text or message.message or ""
+    tag = extract_hashtag(text)
+    if tag:
+        ext = get_extension(media, media_type)
+        return f"{tag}{ext}"
+
     if media_type == "sticker":
-        ext = ".webp"
-        if hasattr(media, "document") and media.document:
-            mime = media.document.mime_type or ""
-            ext_map = {"image/webp": ".webp", "image/png": ".png", "application/x-tgsticker": ".tgs"}
-            ext = ext_map.get(mime, ".webp")
+        ext = get_extension(media, media_type)
         return f"sticker_{message.id}{ext}"
     if hasattr(media, "document") and media.document:
         doc = media.document
         for attr in doc.attributes:
             if hasattr(attr, "file_name") and attr.file_name:
-                return attr.file_name
-        mime = doc.mime_type or ""
-        ext_map = {
-            "video/mp4": ".mp4", "video/avi": ".avi", "video/mkv": ".mkv",
-            "audio/mpeg": ".mp3", "audio/ogg": ".ogg", "audio/mp4": ".m4a",
-            "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
-            "application/pdf": ".pdf", "application/zip": ".zip",
-            "application/x-rar": ".rar", "application/x-7z-compressed": ".7z",
-        }
-        ext = ext_map.get(mime, "")
+                fname = attr.file_name
+                name_part = fname.replace("\\", "/").split("/")[-1]
+                if name_part:
+                    return name_part
+                return fname
+        ext = get_extension(media, media_type)
         if ext:
             return f"{media_type}_{message.id}{ext}"
         return f"{media_type}_{message.id}"
@@ -131,6 +131,48 @@ def compute_md5(file_path):
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def extract_hashtag(text):
+    if not text:
+        return None
+    match = re.search(r"#(\w+)", text)
+    if match:
+        return match.group(1)
+    return None
+
+
+def get_extension(media, media_type):
+    if media_type == "sticker":
+        if hasattr(media, "document") and media.document:
+            mime = media.document.mime_type or ""
+            ext_map = {"image/webp": ".webp", "image/png": ".png", "application/x-tgsticker": ".tgs"}
+            return ext_map.get(mime, ".webp")
+        return ".webp"
+    if media_type == "photo" or (hasattr(media, "photo") or isinstance(media, type(None)) == False and hasattr(media, "photo")):
+        return ".jpg"
+    if hasattr(media, "document") and media.document:
+        mime = media.document.mime_type or ""
+        ext_map = {
+            "video/mp4": ".mp4", "video/avi": ".avi", "video/mkv": ".mkv",
+            "video/quicktime": ".mov", "video/x-msvideo": ".avi",
+            "audio/mpeg": ".mp3", "audio/ogg": ".ogg", "audio/mp4": ".m4a",
+            "audio/wav": ".wav", "audio/aac": ".aac", "audio/flac": ".flac",
+            "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+            "image/webp": ".webp", "application/pdf": ".pdf",
+            "application/zip": ".zip", "application/x-rar": ".rar",
+            "application/x-7z-compressed": ".7z", "application/gzip": ".tar.gz",
+        }
+        for m, ext in ext_map.items():
+            if mime.startswith(m.split("/")[0]) and mime == m:
+                return ext
+        if mime.startswith("video/"):
+            return ".mp4"
+        if mime.startswith("audio/"):
+            return ".mp3"
+        if mime.startswith("image/"):
+            return ".jpg"
+    return ""
 
 async def download_media(message, media, media_type, skip_existing, existing_media):
     if not media:
@@ -226,12 +268,10 @@ def export_sqlite(all_data):
     db.close(conn)
     log.info(f"SQLite exported: {db.DB_PATH} ({len(all_data)} messages)")
 
-def resume_backup():
-    conn = db.init_sync()
-    last_id = db.get_last_id(conn)
-    existing_media = db.get_media_map(conn)
-    db.close(conn)
-    return last_id, existing_media, conn
+def resume_backup(db_conn):
+    last_id = db.get_last_id(db_conn)
+    existing_media = db.get_media_map(db_conn)
+    return last_id, existing_media
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Backup a Telegram channel completely.")
@@ -254,11 +294,16 @@ async def main():
     create_folders()
     await login()
     semaphore = asyncio.Semaphore(CONCURRENT_DOWNLOADS)
+
+    db_conn = db.init_sync()
     offset_id = 0
     existing_media = {}
-    db_conn = None
     if args.resume:
-        offset_id, existing_media, _ = resume_backup()
+        last_id, existing_media = resume_backup(db_conn)
+        if last_id:
+            offset_id = last_id
+            log.info(f"Resuming from message ID {last_id} (offset_id={offset_id})")
+
     channel = await client.get_entity(CHANNEL)
     total = await client.get_messages(channel, limit=1)
     total_count = total.total if hasattr(total, 'total') and total.total else None
@@ -269,7 +314,7 @@ async def main():
             total_count = None
     log.info(f"Backing up channel: {CHANNEL} (~{total_count or 'unknown'} messages)")
     all_messages = []
-    last_log_id = 0
+
     date_filter = None
     if args.start_date:
         from datetime import timedelta
@@ -277,47 +322,54 @@ async def main():
     end_date_filter = None
     if args.end_date:
         end_date_filter = datetime.strptime(args.end_date, "%Y-%m-%d") + timedelta(days=1)
+
     msg_iter = client.iter_messages(channel, offset_id=offset_id, reverse=True)
     pbar = tqdm(desc="Processing messages", unit=" msg", total=total_count)
     async for msg in msg_iter:
         try:
             if date_filter and msg.date and msg.date.replace(tzinfo=None) < date_filter:
-                continue
-            if end_date_filter and msg.date and msg.date.replace(tzinfo=None) > end_date_filter:
-                continue
-            if args.only_text and msg.media:
-                data = save_message(msg)
-                if data["text"]:
-                    all_messages.append(data)
                 pbar.update(1)
                 continue
+            if end_date_filter and msg.date and msg.date.replace(tzinfo=None) > end_date_filter:
+                pbar.update(1)
+                continue
+
+            data = save_message(msg)
+
+            if args.only_text and msg.media:
+                if data["text"]:
+                    all_messages.append(data)
+                    db.insert_message(db_conn, data)
+                pbar.update(1)
+                continue
+
             if args.only_media and not msg.media:
                 pbar.update(1)
                 continue
-            if isinstance(msg.media, MessageMediaWebPage):
-                data = save_message(msg)
-                all_messages.append(data)
-                pbar.update(1)
-                continue
+
             media = msg.media
-            media_path = None
-            md5_hash = None
-            if media:
+            if media and not isinstance(media, MessageMediaWebPage):
                 cat, _ = get_media_category(media)
                 if cat and (args.media_type == "all" or args.media_type == cat):
                     media_path, md5_hash = await download_media(
                         msg, media, cat, args.skip_existing, existing_media
                     )
-            data = save_message(msg)
-            data["media_path"] = media_path
-            data["md5_hash"] = md5_hash
-            if args.only_media and not media_path:
+                    data["media_path"] = media_path
+                    data["md5_hash"] = md5_hash
+
+            if args.only_media and not data.get("media_path"):
                 pbar.update(1)
                 continue
+
             all_messages.append(data)
+            db.insert_message(db_conn, data)
+
             if msg.id % 100 == 0:
-                log.info(f"Progress: {msg.id} messages processed (last: {msg.id})")
+                processed = len(all_messages)
+                log.info(f"Progress: id={msg.id} | saved={processed}")
+
             pbar.update(1)
+
         except FloodWaitError as e:
             wait = e.seconds
             log.warning(f"FloodWait: waiting {wait}s ({wait/60:.1f}min)")
@@ -325,16 +377,22 @@ async def main():
             for remaining in tqdm(range(wait), desc="Waiting", unit="s"):
                 await asyncio.sleep(1)
             pbar.set_description("Processing messages")
+            if data:
+                all_messages.append(data)
+                db.insert_message(db_conn, data)
+                pbar.update(1)
+
         except Exception as e:
             log.error(f"Error processing msg {msg.id}: {e}")
             continue
+
     pbar.close()
+    db.close(db_conn)
+
     elapsed = datetime.now() - start_time
     log.info(f"Processed {len(all_messages)} messages in {elapsed}")
     export_json(all_messages)
     export_csv(all_messages)
-    if not args.no_sqlite:
-        export_sqlite(all_messages)
     log.info("Backup completed successfully!")
 
 if __name__ == "__main__":
