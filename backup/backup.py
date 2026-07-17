@@ -22,6 +22,7 @@ from tqdm import tqdm
 from config import API_ID, API_HASH, CHANNEL, OUTPUT_DIR, CONCURRENT_DOWNLOADS, SESSION_NAME, validate
 import database as db
 
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -46,7 +47,6 @@ semaphore = None
 start_time = None
 
 def create_folders():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     for folder in set(MEDIA_DIRS.values()):
         os.makedirs(os.path.join(OUTPUT_DIR, "media", folder), exist_ok=True)
     os.makedirs(os.path.join(OUTPUT_DIR, "media", "others"), exist_ok=True)
