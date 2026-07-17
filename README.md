@@ -7,8 +7,6 @@ Ferramentas para backup e restore de canais do Telegram.
 ```
 ├── backup/          # Scripts para backup de canais
 ├── restore/         # Scripts para restore de backups
-├── Prompt_backup.md    # Especificação do backup
-├── Prompt_restore.md   # Especificação do restore
 └── README.md
 ```
 
@@ -23,4 +21,9 @@ python backup/backup.py
 
 ## Restore
 
-*(em desenvolvimento)*
+```bash
+pip install -r restore/requirements.txt
+cp restore/.env.example restore/.env
+# editar restore/.env
+python restore/main.py
+```
