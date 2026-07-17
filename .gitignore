@@ -4,3 +4,4 @@ __pycache__/
 logs/
 *.session
 **/venv
+**/telegram_restore.session-journal
