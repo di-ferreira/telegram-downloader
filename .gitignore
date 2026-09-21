@@ -6,3 +6,4 @@ logs/
 **/venv
 **/telegram_restore.session-journal
 backup/channels.txt
+.vscode/PythonImportHelper-v2-Completion.json
