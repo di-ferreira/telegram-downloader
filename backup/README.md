@@ -27,7 +27,7 @@ cp .env.example .env
 |---|---|---|
 | `API_ID` | Sim | Seu API ID (my.telegram.org) |
 | `API_HASH` | Sim | Seu API Hash (my.telegram.org) |
-| `CHANNEL` | Sim | Username do canal (`@canal`) ou link de convite |
+| `CHANNEL` | Sim | Username do canal (`@canal`), ID numérico (`-100XXXXX`) ou link de convite |
 | `OUTPUT_DIR` | Não | Pasta de saída (padrão: `downloads`) |
 | `CONCURRENT_DOWNLOADS` | Não | Downloads simultâneos (padrão: `5`) |
 | `SESSION_NAME` | Não | Nome do arquivo de sessão (padrão: `telegram_backup`) |
@@ -63,6 +63,9 @@ O script baixará todas as mensagens e mídias do canal, salvando na pasta defin
 | `--skip-existing` | Pula arquivos já baixados (usando hash MD5) |
 | `--no-sqlite` | Não cria banco SQLite |
 | `--no-resume` | Ignora checkpoint anterior e recomeça do zero |
+| `--message-id ID [ID ...]` | Baixa mensagem(s) específica(s) pelo ID |
+| `--list-channels` | Lista todos os canais e grupos acessíveis |
+| `-S`, `--save` | Salva a saída do `--list-channels` em `channels.txt` |
 
 ## Exemplos
 
@@ -105,6 +108,40 @@ python backup/backup.py --skip-existing
 python backup/backup.py --no-resume
 ```
 
+### Baixar um post específico
+
+```bash
+python backup/backup.py --message-id 3
+```
+
+### Baixar múltiplos posts
+
+```bash
+python backup/backup.py --message-id 3 7 15 42
+```
+
+### Baixar post específico filtrando tipo de mídia
+
+```bash
+python backup/backup.py --message-id 3 --media-type video
+```
+
+### Listar canais acessíveis
+
+```bash
+python backup/backup.py --list-channels
+```
+
+### Listar canais e salvar em arquivo
+
+```bash
+python backup/backup.py --list-channels --save
+# ou
+python backup/backup.py --list-channels -S
+```
+
+> O arquivo `channels.txt` é criado na pasta `backup/` com o ID, tipo, username e título de cada canal.
+
 ## Retomada automática
 
 O script salva o progresso no banco SQLite (`backup.db`). Se for interrompido (Ctrl+C, queda de conexão, etc.), basta executar novamente que ele continuará de onde parou.
@@ -132,6 +169,9 @@ downloads/
 ## Funcionalidades
 
 - Backup completo de mensagens e todos os tipos de mídia
+- Download de posts específicos por ID (`--message-id`)
+- Listagem de canais acessíveis (`--list-channels`)
+- Suporte a canais privados por ID numérico
 - Retomada automática de execuções interrompidas
 - Tratamento de FloodWait com espera automática
 - Downloads simultâneos (configurável)
