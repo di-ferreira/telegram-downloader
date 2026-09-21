@@ -6,4 +6,6 @@ logs/
 **/venv
 **/telegram_restore.session-journal
 backup/channels.txt
+backup/channels_ia.txt
+backup/channels_youtube.txt
 .vscode/PythonImportHelper-v2-Completion.json
