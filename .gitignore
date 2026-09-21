@@ -5,3 +5,4 @@ logs/
 *.session
 **/venv
 **/telegram_restore.session-journal
+backup/channels.txt

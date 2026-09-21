@@ -14,7 +14,7 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 from telethon.tl.types import (
     MessageMediaPhoto, MessageMediaDocument, MessageMediaWebPage,
-    Message, PeerChannel
+    Message, PeerChannel, Channel
 )
 from tqdm.asyncio import tqdm as async_tqdm
 from tqdm import tqdm
@@ -284,6 +284,9 @@ def parse_args():
     parser.add_argument("--no-sqlite", action="store_true", help="Skip SQLite export")
     parser.add_argument("--resume", action="store_true", default=True, help="Resume from last checkpoint (default: True)")
     parser.add_argument("--no-resume", action="store_false", dest="resume", help="Start fresh backup")
+    parser.add_argument("--message-id", type=int, nargs="+", help="Download specific message(s) by ID")
+    parser.add_argument("--list-channels", action="store_true", help="List all accessible channels and groups")
+    parser.add_argument("-S", "--save", action="store_true", help="Save list-channels output to channels.txt")
     return parser.parse_args()
 
 async def main():
@@ -295,6 +298,30 @@ async def main():
     await login()
     semaphore = asyncio.Semaphore(CONCURRENT_DOWNLOADS)
 
+    if args.list_channels:
+        log.info("Listing accessible channels and groups:")
+        lines = []
+        lines.append("=" * 70)
+        lines.append(f"{'ID':<20} {'Type':<10} {'Username':<25} Title")
+        lines.append("=" * 70)
+        async for dialog in client.iter_dialogs():
+            entity = dialog.entity
+            if isinstance(entity, Channel):
+                chat_id = int(f"-100{entity.id}")
+                username = f"@{entity.username}" if entity.username else "-"
+                ch_type = "Channel" if entity.broadcast else "Group"
+                lines.append(f"{chat_id:<20} {ch_type:<10} {username:<25} {entity.title}")
+        lines.append("=" * 70)
+        output = "\n".join(lines)
+        print(f"\n{output}")
+        if args.save:
+            save_path = Path(__file__).parent / "channels.txt"
+            with open(save_path, "w", encoding="utf-8") as f:
+                f.write(output + "\n")
+            log.info(f"Saved to {save_path}")
+        await client.disconnect()
+        return
+
     db_conn = db.init_sync()
     offset_id = 0
     existing_media = {}
@@ -304,89 +331,144 @@ async def main():
             offset_id = last_id
             log.info(f"Resuming from message ID {last_id} (offset_id={offset_id})")
 
-    channel = await client.get_entity(CHANNEL)
-    total = await client.get_messages(channel, limit=1)
-    total_count = total.total if hasattr(total, 'total') and total.total else None
-    if total_count is None:
-        try:
-            total_count = (await client.get_messages(channel, limit=0)).total
-        except Exception:
-            total_count = None
-    log.info(f"Backing up channel: {CHANNEL} (~{total_count or 'unknown'} messages)")
+    try:
+        channel = await client.get_entity(CHANNEL)
+    except ValueError:
+        channel_str = str(CHANNEL)
+        if channel_str.startswith("-100"):
+            channel_id = int(channel_str[4:])
+        else:
+            channel_id = abs(int(channel_str))
+        channel = None
+        async for dialog in client.iter_dialogs():
+            entity = dialog.entity
+            if isinstance(entity, Channel) and entity.id == channel_id:
+                channel = entity
+                break
+        if channel is None:
+            raise ValueError(f"Channel '{CHANNEL}' not found in your dialogs")
+        log.info(f"Resolved channel by ID: {channel.title}")
     all_messages = []
 
-    date_filter = None
-    if args.start_date:
-        from datetime import timedelta
-        date_filter = datetime.strptime(args.start_date, "%Y-%m-%d")
-    end_date_filter = None
-    if args.end_date:
-        end_date_filter = datetime.strptime(args.end_date, "%Y-%m-%d") + timedelta(days=1)
+    if args.message_id:
+        log.info(f"Fetching specific messages: {args.message_id}")
+        pbar = tqdm(desc="Processing messages", unit=" msg", total=len(args.message_id))
+        for msg_id in args.message_id:
+            try:
+                msg = await client.get_messages(channel, ids=msg_id)
+                if msg is None:
+                    log.warning(f"Message {msg_id} not found")
+                    pbar.update(1)
+                    continue
 
-    msg_iter = client.iter_messages(channel, offset_id=offset_id, reverse=True)
-    pbar = tqdm(desc="Processing messages", unit=" msg", total=total_count)
-    async for msg in msg_iter:
-        try:
-            if date_filter and msg.date and msg.date.replace(tzinfo=None) < date_filter:
-                pbar.update(1)
-                continue
-            if end_date_filter and msg.date and msg.date.replace(tzinfo=None) > end_date_filter:
-                pbar.update(1)
-                continue
+                data = save_message(msg)
 
-            data = save_message(msg)
+                media = msg.media
+                if media and not isinstance(media, MessageMediaWebPage):
+                    cat, _ = get_media_category(media)
+                    if cat and (args.media_type == "all" or args.media_type == cat):
+                        media_path, md5_hash = await download_media(
+                            msg, media, cat, args.skip_existing, existing_media
+                        )
+                        data["media_path"] = media_path
+                        data["md5_hash"] = md5_hash
 
-            if args.only_text and msg.media:
-                if data["text"]:
-                    all_messages.append(data)
-                    db.insert_message(db_conn, data)
-                pbar.update(1)
-                continue
-
-            if args.only_media and not msg.media:
-                pbar.update(1)
-                continue
-
-            media = msg.media
-            if media and not isinstance(media, MessageMediaWebPage):
-                cat, _ = get_media_category(media)
-                if cat and (args.media_type == "all" or args.media_type == cat):
-                    media_path, md5_hash = await download_media(
-                        msg, media, cat, args.skip_existing, existing_media
-                    )
-                    data["media_path"] = media_path
-                    data["md5_hash"] = md5_hash
-
-            if args.only_media and not data.get("media_path"):
-                pbar.update(1)
-                continue
-
-            all_messages.append(data)
-            db.insert_message(db_conn, data)
-
-            if msg.id % 100 == 0:
-                processed = len(all_messages)
-                log.info(f"Progress: id={msg.id} | saved={processed}")
-
-            pbar.update(1)
-
-        except FloodWaitError as e:
-            wait = e.seconds
-            log.warning(f"FloodWait: waiting {wait}s ({wait/60:.1f}min)")
-            pbar.set_description(f"FloodWait {wait}s")
-            for remaining in tqdm(range(wait), desc="Waiting", unit="s"):
-                await asyncio.sleep(1)
-            pbar.set_description("Processing messages")
-            if data:
                 all_messages.append(data)
                 db.insert_message(db_conn, data)
+                log.info(f"Saved message {msg_id}")
                 pbar.update(1)
 
-        except Exception as e:
-            log.error(f"Error processing msg {msg.id}: {e}")
-            continue
+            except FloodWaitError as e:
+                wait = e.seconds
+                log.warning(f"FloodWait: waiting {wait}s ({wait/60:.1f}min)")
+                for remaining in tqdm(range(wait), desc="Waiting", unit="s"):
+                    await asyncio.sleep(1)
+            except Exception as e:
+                log.error(f"Error processing msg {msg_id}: {e}")
+                pbar.update(1)
+        pbar.close()
+    else:
+        total = await client.get_messages(channel, limit=1)
+        total_count = total.total if hasattr(total, 'total') and total.total else None
+        if total_count is None:
+            try:
+                total_count = (await client.get_messages(channel, limit=0)).total
+            except Exception:
+                total_count = None
+        log.info(f"Backing up channel: {CHANNEL} (~{total_count or 'unknown'} messages)")
 
-    pbar.close()
+        date_filter = None
+        if args.start_date:
+            from datetime import timedelta
+            date_filter = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date_filter = None
+        if args.end_date:
+            end_date_filter = datetime.strptime(args.end_date, "%Y-%m-%d") + timedelta(days=1)
+
+        msg_iter = client.iter_messages(channel, offset_id=offset_id, reverse=True)
+        pbar = tqdm(desc="Processing messages", unit=" msg", total=total_count)
+        async for msg in msg_iter:
+            try:
+                if date_filter and msg.date and msg.date.replace(tzinfo=None) < date_filter:
+                    pbar.update(1)
+                    continue
+                if end_date_filter and msg.date and msg.date.replace(tzinfo=None) > end_date_filter:
+                    pbar.update(1)
+                    continue
+
+                data = save_message(msg)
+
+                if args.only_text and msg.media:
+                    if data["text"]:
+                        all_messages.append(data)
+                        db.insert_message(db_conn, data)
+                    pbar.update(1)
+                    continue
+
+                if args.only_media and not msg.media:
+                    pbar.update(1)
+                    continue
+
+                media = msg.media
+                if media and not isinstance(media, MessageMediaWebPage):
+                    cat, _ = get_media_category(media)
+                    if cat and (args.media_type == "all" or args.media_type == cat):
+                        media_path, md5_hash = await download_media(
+                            msg, media, cat, args.skip_existing, existing_media
+                        )
+                        data["media_path"] = media_path
+                        data["md5_hash"] = md5_hash
+
+                if args.only_media and not data.get("media_path"):
+                    pbar.update(1)
+                    continue
+
+                all_messages.append(data)
+                db.insert_message(db_conn, data)
+
+                if msg.id % 100 == 0:
+                    processed = len(all_messages)
+                    log.info(f"Progress: id={msg.id} | saved={processed}")
+
+                pbar.update(1)
+
+            except FloodWaitError as e:
+                wait = e.seconds
+                log.warning(f"FloodWait: waiting {wait}s ({wait/60:.1f}min)")
+                pbar.set_description(f"FloodWait {wait}s")
+                for remaining in tqdm(range(wait), desc="Waiting", unit="s"):
+                    await asyncio.sleep(1)
+                pbar.set_description("Processing messages")
+                if data:
+                    all_messages.append(data)
+                    db.insert_message(db_conn, data)
+                    pbar.update(1)
+
+            except Exception as e:
+                log.error(f"Error processing msg {msg.id}: {e}")
+                continue
+
+        pbar.close()
     db.close(db_conn)
 
     elapsed = datetime.now() - start_time
