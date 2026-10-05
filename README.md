@@ -13,11 +13,16 @@ Ferramentas para backup e restore de canais do Telegram.
 ## Backup
 
 ```bash
-pip install -r backup/requirements.txt
-cp backup/.env.example backup/.env
-# editar backup/.env
-python backup/backup.py
+cd backup
+python3.12 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# editar .env
+python backup.py
 ```
+
+> O venv precisa estar ativado antes de rodar o script, senão o `python` do sistema não terá o Telethon.
 
 ## Restore
 

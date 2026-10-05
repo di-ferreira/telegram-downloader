@@ -9,9 +9,16 @@ Ferramenta para backup completo de canais do Telegram usando Telethon.
 
 ## Instalação
 
+Crie o ambiente virtual e instale as dependências:
+
 ```bash
+cd backup
+python3.12 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+> Sempre ative o venv (`source venv/bin/activate`) antes de rodar o script — caso contrário o `python` do sistema não terá o Telethon instalado.
 
 ## Configuração
 
@@ -36,9 +43,10 @@ cp .env.example .env
 
 ## Como usar
 
-Execute a partir da raiz do projeto:
+Ative o venv e execute a partir da raiz do projeto:
 
 ```bash
+source backup/venv/bin/activate
 python backup/backup.py
 ```
 
@@ -46,6 +54,7 @@ Ou diretamente da pasta `backup/`:
 
 ```bash
 cd backup
+source venv/bin/activate
 python backup.py
 ```
 
@@ -68,6 +77,8 @@ O script baixará todas as mensagens e mídias do canal, salvando na pasta defin
 | `-S`, `--save` | Salva a saída do `--list-channels` em `channels.txt` |
 
 ## Exemplos
+
+> Todos os exemplos assumem o venv ativado (`source venv/bin/activate`).
 
 ### Backup completo
 
