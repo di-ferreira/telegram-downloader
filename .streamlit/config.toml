@@ -1,0 +1,15 @@
+# Streamlit config, read from the repository root when the app is started with
+#   streamlit run frontend/streamlit_app.py
+#
+# SECURITY: bind the UI to loopback only. Streamlit's default (0.0.0.0) would
+# expose the whole app on every interface, and this machine has a public IP.
+
+[server]
+address = "127.0.0.1"
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
