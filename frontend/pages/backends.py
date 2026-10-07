@@ -179,72 +179,114 @@ if not canais:
     )
 else:
     CH_PAGE_SIZE = 25
-    page = flt.render_pagination(len(canais), flt.get_page("ch"), CH_PAGE_SIZE, prefix="ch")
-    inicio = (page - 1) * CH_PAGE_SIZE
 
-    h1, h2, h3, h4, h5 = st.columns([2, 1, 2.5, 4, 3])
-    h1.caption("**ID**")
-    h2.caption("**Type**")
-    h3.caption("**Username**")
-    h4.caption("**Title**")
-    h5.caption("**Download**")
+    def _clear_channel_query() -> None:
+        # Roda antes do corpo do script (callback), quando ainda é seguro
+        # escrever na chave do widget.
+        st.session_state["ch_query"] = ""
+        st.session_state.pop("pick_channel", None)
+        flt.reset_page("ch")
 
-    for row in canais[inicio : inicio + CH_PAGE_SIZE]:
-        c1, c2, c3, c4, c5 = st.columns([2, 1, 2.5, 4, 3])
-        with c1:
-            st.caption(f"`{row['id']}`")
-        with c2:
-            st.caption(row["type"])
-        with c3:
-            st.caption(row["username"])
-        with c4:
-            st.markdown(f"**{row['title'] or '(sem título)'}**")
-        with c5:
-            if _downloading_id == str(row["id"]):
-                st.caption("⏳ baixando…")
-                continue
-            baixado, fonte = channels.is_downloaded(row)
-            if not baixado:
-                if st.button(
-                    "⬇️ Baixar",
-                    key=f"ch_dl_{row['id']}",
-                    width="stretch",
-                    disabled=_backup_busy,
-                    help="Grava `CHANNEL`/`OUTPUT_DIR` no `.env` e baixa este canal "
-                    "para `OUTPUT_BASE/<título>`.",
-                ):
-                    _download(row)
-                continue
-            if fonte is None:
-                # pasta com conteúdo que ainda não virou fonte (ex.: cópia manual)
-                with st.spinner(f"Registrando `{row['title'] or row['id']}`..."):
-                    fonte = channels.ensure_source(row)
-                    if fonte and not fonte.get("last_scanned_at"):
-                        channels.scan(fonte)
-                if fonte:
-                    st.rerun()
-                st.caption("⚠️ pasta sem `backup.db`/`messages.json` indexável.")
-                continue
-            qparams = {"source": str(fonte["id"])}
-            g, p = st.columns(2)
-            with g:
-                ui.page_link("pages/gallery.py", "🖼️ Galeria", query_params=qparams)
-            with p:
-                ui.page_link("pages/player.py", "▶️ Reprodutor", query_params=qparams)
+    q1, q2 = st.columns([5, 1])
+    with q1:
+        st.text_input(
+            "🔍 Buscar canal",
+            key="ch_query",
+            placeholder="título, @username ou ID",
+            help="Filtra por título, @username ou ID — sem diferenciar maiúsculas.",
+        )
+    with q2:
+        st.write("")
+        st.button(
+            "🧹 Limpar",
+            key="ch_clear",
+            on_click=_clear_channel_query,
+            disabled=not (st.session_state.get("ch_query") or "").strip(),
+        )
 
-    flt.render_pagination(
-        len(canais), page, CH_PAGE_SIZE, prefix="ch", instance="bottom"
+    query = (st.session_state.get("ch_query") or "").strip()
+    if st.session_state.get("ch_sig") != query.lower():
+        st.session_state["ch_sig"] = query.lower()
+        st.session_state.pop("pick_channel", None)
+        flt.reset_page("ch")
+
+    filtrados = channels.filter_rows(canais, query)
+    st.caption(
+        f"**{len(filtrados)}** de **{len(canais)}** canal(is)"
+        + (f' · filtro "{query}"' if query else "")
     )
 
-    opcoes = {
-        f"{row['title'] or '(sem título)'} · {row['username']} · {row['id']}": row["id"]
-        for row in canais
-    }
-    escolhido = st.selectbox("Usar como CHANNEL", list(opcoes), key="pick_channel")
-    if st.button("✅ Gravar CHANNEL no `.env`", key="apply_channel"):
-        envfile.write({"CHANNEL": opcoes[escolhido]})
-        st.success(f"CHANNEL = {opcoes[escolhido]}")
-        st.rerun()
+    if not filtrados:
+        st.info(f'Nenhum canal corresponde a "{query}".')
+    else:
+        page = flt.render_pagination(
+            len(filtrados), flt.get_page("ch"), CH_PAGE_SIZE, prefix="ch"
+        )
+        inicio = (page - 1) * CH_PAGE_SIZE
+
+        h1, h2, h3, h4, h5 = st.columns([2, 1, 2.5, 4, 3])
+        h1.caption("**ID**")
+        h2.caption("**Type**")
+        h3.caption("**Username**")
+        h4.caption("**Title**")
+        h5.caption("**Download**")
+
+        for row in filtrados[inicio : inicio + CH_PAGE_SIZE]:
+            c1, c2, c3, c4, c5 = st.columns([2, 1, 2.5, 4, 3])
+            with c1:
+                st.caption(f"`{row['id']}`")
+            with c2:
+                st.caption(row["type"])
+            with c3:
+                st.caption(row["username"])
+            with c4:
+                st.markdown(f"**{row['title'] or '(sem título)'}**")
+            with c5:
+                if _downloading_id == str(row["id"]):
+                    st.caption("⏳ baixando…")
+                    continue
+                baixado, fonte = channels.is_downloaded(row)
+                if not baixado:
+                    if st.button(
+                        "⬇️ Baixar",
+                        key=f"ch_dl_{row['id']}",
+                        width="stretch",
+                        disabled=_backup_busy,
+                        help="Grava `CHANNEL`/`OUTPUT_DIR` no `.env` e baixa este canal "
+                        "para `OUTPUT_BASE/<título>`.",
+                    ):
+                        _download(row)
+                    continue
+                if fonte is None:
+                    # pasta com conteúdo que ainda não virou fonte (ex.: cópia manual)
+                    with st.spinner(f"Registrando `{row['title'] or row['id']}`..."):
+                        fonte = channels.ensure_source(row)
+                        if fonte and not fonte.get("last_scanned_at"):
+                            channels.scan(fonte)
+                    if fonte:
+                        st.rerun()
+                    st.caption("⚠️ pasta sem `backup.db`/`messages.json` indexável.")
+                    continue
+                qparams = {"source": str(fonte["id"])}
+                g, p = st.columns(2)
+                with g:
+                    ui.page_link("pages/gallery.py", "🖼️ Galeria", query_params=qparams)
+                with p:
+                    ui.page_link("pages/player.py", "▶️ Reprodutor", query_params=qparams)
+
+        flt.render_pagination(
+            len(filtrados), page, CH_PAGE_SIZE, prefix="ch", instance="bottom"
+        )
+
+        opcoes = {
+            f"{row['title'] or '(sem título)'} · {row['username']} · {row['id']}": row["id"]
+            for row in filtrados
+        }
+        escolhido = st.selectbox("Usar como CHANNEL", list(opcoes), key="pick_channel")
+        if st.button("✅ Gravar CHANNEL no `.env`", key="apply_channel"):
+            envfile.write({"CHANNEL": opcoes[escolhido]})
+            st.success(f"CHANNEL = {opcoes[escolhido]}")
+            st.rerun()
 
 col_a, col_b = st.columns([1, 1])
 with col_a:

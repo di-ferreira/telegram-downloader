@@ -22,6 +22,28 @@ def rows() -> list[dict[str, str]]:
     return backend_state.saved_channels()
 
 
+def filter_rows(items: list[dict[str, str]], query: str) -> list[dict[str, str]]:
+    """Substring match over title, username (with/without ``@``) and id.
+
+    Case-insensitive; an empty query returns everything.
+    """
+    needle = norm(query)
+    if not needle:
+        return items
+    return [
+        row
+        for row in items
+        if any(
+            needle in haystack
+            for haystack in (
+                norm(row.get("title")),
+                norm(row.get("username")),
+                norm(row.get("id")),
+            )
+        )
+    ]
+
+
 def norm(value: Any) -> str:
     """Case-insensitive identity: ``@User`` == ``user``."""
     text = str(value or "").strip().lower()
