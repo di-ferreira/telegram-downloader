@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-from core import backend_state, content, envfile, registry
+from core import backend_state, content, envfile, paths, registry
 
 _ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _SLUG_MAX = 80
@@ -135,6 +135,14 @@ def is_downloaded(row: dict[str, str]) -> tuple[bool, dict | None]:
         return True, source
     folder = folder_for(row)
     return (True, None) if has_content(folder) else (False, None)
+
+
+def folder_size(row: dict[str, str]) -> tuple[int, int] | None:
+    """``(files, bytes)`` em disco da pasta do canal, ou ``None`` se não baixado."""
+    folder = folder_for(row)
+    if not has_content(folder):
+        return None
+    return paths.folder_size(folder)
 
 
 def ensure_source(row: dict[str, str]) -> dict | None:

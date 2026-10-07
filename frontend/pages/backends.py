@@ -8,7 +8,7 @@ import streamlit as st
 
 from components import filters as flt, ui
 from config import MEDIA_TYPES, REPO_ROOT
-from core import backend_state, channels, content, envfile, job_runner, preflight, registry
+from core import backend_state, channels, content, envfile, job_runner, preflight, registry, telestat
 from core.paths import human_size
 
 st.title("🔌 Backends — backup e restore")
@@ -79,6 +79,7 @@ def _register_download(args: dict) -> None:
     if row is None:
         return
     label = row.get("title") or channel_id
+    st.session_state.setdefault("ch_foldersizes", {}).pop(channel_id, None)
     try:
         source = channels.ensure_source(row)
         if not source:
@@ -162,6 +163,57 @@ def _active_job_fragment() -> None:
 
 _active_job_fragment()
 
+
+# ------------------------------------------------------------- tamanho
+def _folder_bytes(row: dict) -> int | None:
+    """Tamanho em disco da pasta do canal — cacheado (o ``os.walk`` é caro)."""
+    key = str(row["id"])
+    cache = st.session_state.setdefault("ch_foldersizes", {})
+    if key not in cache:
+        found = channels.folder_size(row)
+        cache[key] = None if found is None else int(found[1])
+    return cache[key]
+
+
+def _size_cell(row: dict, baixado: bool) -> None:
+    key = str(row["id"])
+    if _downloading_id == key:
+        st.caption("…", help="Download em andamento — o tamanho aparece ao terminar.")
+        return
+    if baixado:
+        total = _folder_bytes(row)
+        st.caption(
+            human_size(total) if total else "—",
+            help=f"Em disco: `{channels.folder_for(row)}`",
+        )
+        return
+    entry = telestat.cached(key)
+    if entry and entry.get("est"):
+        bits = [
+            f"{int(entry.get('total') or 0):,} mensagens",
+            f"amostra de {int(entry.get('sample') or 0)}",
+        ]
+        if entry.get("photos"):
+            bits.append(f"{int(entry['photos'])} fotos na amostra contam 0 B")
+        st.caption(f"≈ {human_size(int(entry['est']))}", help="Estimativa · " + " · ".join(bits))
+        return
+    if st.button(
+        "📏",
+        key=f"ch_size_{key}",
+        width="content",
+        disabled=_backup_busy,
+        help="Estimar o tamanho no Telegram (≈, leva ~1-3 s).",
+    ):
+        with st.spinner("Consultando o Telegram…"):
+            try:
+                result = telestat.estimate_sync(telestat.entity_ref(row))
+            except Exception as exc:  # noqa: BLE001 - erro do Telethon vira aviso amigável
+                st.warning(f"Não consegui estimar `{row.get('title') or key}`: {exc}")
+            else:
+                telestat.store(key, result)
+                st.rerun()
+
+
 # ----------------------------------------------------------------- canais
 st.markdown("---")
 st.subheader("📡 Canais acessíveis")
@@ -224,15 +276,17 @@ else:
         )
         inicio = (page - 1) * CH_PAGE_SIZE
 
-        h1, h2, h3, h4, h5 = st.columns([2, 1, 2.5, 4, 3])
+        h1, h2, h3, h4, h5, h6 = st.columns([1.8, 0.9, 2.2, 3.6, 1.6, 3])
         h1.caption("**ID**")
         h2.caption("**Type**")
         h3.caption("**Username**")
         h4.caption("**Title**")
-        h5.caption("**Download**")
+        h5.caption("**Tamanho**")
+        h6.caption("**Download**")
 
         for row in filtrados[inicio : inicio + CH_PAGE_SIZE]:
-            c1, c2, c3, c4, c5 = st.columns([2, 1, 2.5, 4, 3])
+            baixado, fonte = channels.is_downloaded(row)
+            c1, c2, c3, c4, c5, c6 = st.columns([1.8, 0.9, 2.2, 3.6, 1.6, 3])
             with c1:
                 st.caption(f"`{row['id']}`")
             with c2:
@@ -242,10 +296,11 @@ else:
             with c4:
                 st.markdown(f"**{row['title'] or '(sem título)'}**")
             with c5:
+                _size_cell(row, baixado)
+            with c6:
                 if _downloading_id == str(row["id"]):
                     st.caption("⏳ baixando…")
                     continue
-                baixado, fonte = channels.is_downloaded(row)
                 if not baixado:
                     if st.button(
                         "⬇️ Baixar",
