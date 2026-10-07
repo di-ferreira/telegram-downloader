@@ -1,8 +1,22 @@
 from __future__ import annotations
 
 import streamlit as st
+from streamlit.errors import StreamlitPageNotFoundError
 
 from core import registry
+
+
+def page_link(page: str, label: str, icon: str | None = None) -> None:
+    """Navega para outra página, degradando para legenda fora da navegação.
+
+    ``st.page_link`` só aceita páginas registradas em ``st.navigation``; num
+    script ou teste que roda a página sozinha ele lança
+    ``StreamlitPageNotFoundError``, então ali o link vira texto simples.
+    """
+    try:
+        st.page_link(page, label=label, icon=icon)
+    except StreamlitPageNotFoundError:
+        st.caption(f"{(icon + ' ') if icon else ''}{label}")
 
 
 def current_source() -> dict | None:

@@ -67,6 +67,8 @@ _navigation = st.navigation(
         "Dados": [
             st.Page("pages/sources.py", title="Fontes", icon="🗂️"),
             st.Page("pages/jobs.py", title="Backup & Restore", icon="⚙️"),
+            st.Page("pages/backends.py", title="Backends", icon="🔌"),
+            st.Page("pages/config.py", title="Configurações", icon="🛠️"),
         ],
     },
     position="sidebar",

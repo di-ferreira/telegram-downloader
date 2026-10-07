@@ -8,9 +8,33 @@ import streamlit as st
 
 from components import ui
 from config import MEDIA_TYPES, REPO_ROOT
-from core import job_runner, registry
+from core import job_runner, preflight, registry
 
 st.title("Backup & Restore")
+ui.page_link(
+    "pages/backends.py",
+    label="🔌 Descobrir canais · simular restore · progresso",
+    icon="🔌",
+)
+
+
+def _show_checks(checks: list[dict]) -> list[dict]:
+    """Render preflight items and return the blocking ones."""
+    failures = preflight.errors(checks)
+    for item in checks:
+        if item["level"] == "error":
+            st.error(item["message"] + (f"\n\n`{item['fix']}`" if item.get("fix") else ""))
+        elif item["level"] == "warn":
+            st.warning(item["message"] + (f"\n\n`{item['fix']}`" if item.get("fix") else ""))
+    if failures:
+        ui.page_link("pages/config.py", label="Abrir Configurações", icon="⚙️")
+    return failures
+
+
+def _show_blockers(tool: str, opts: dict | None = None) -> list[dict]:
+    """Blocking preflight items of one tool, rendered in place."""
+    checks = preflight.for_backup(opts) if tool == "backup" else preflight.for_restore(opts)
+    return _show_checks(checks)
 
 jobs = registry.list_jobs(limit=20)
 selected_job: dict | None = None
@@ -95,6 +119,7 @@ left, right = st.columns(2)
 
 with left:
     st.subheader("▶️ Executar backup")
+    _bk_blockers = _show_blockers("backup")
     with st.form("backup_form"):
         b1, b2 = st.columns(2)
         with b1:
@@ -111,6 +136,12 @@ with left:
             skip_existing = st.checkbox("Ignorar já existentes", value=True, key="bk_skip")
         with c2:
             resume = st.checkbox("Retomar de onde parou", value=True, key="bk_resume")
+        no_sqlite = st.checkbox(
+            "Não gravar `backup.db`",
+            key="bk_nosqlite",
+            help="O backend atual grava o banco de qualquer forma (a retomada depende "
+            "dele) — a flag é espelhada da CLI, mas hoje é sem efeito.",
+        )
         message_ids = st.text_input(
             "IDs de mensagem (separados por vírgula)",
             key="bk_ids",
@@ -119,7 +150,9 @@ with left:
         )
         list_channels = st.checkbox("Listar canais disponíveis", key="bk_list")
         save_channels = st.checkbox("Salvar canais listados", key="bk_save")
-        submitted_backup = st.form_submit_button("🚀 Iniciar backup", type="primary")
+        submitted_backup = st.form_submit_button(
+            "🚀 Iniciar backup", type="primary", disabled=bool(_bk_blockers)
+        )
 
 if submitted_backup:
     opts = {
@@ -130,10 +163,13 @@ if submitted_backup:
         "media_type": media_type,
         "skip_existing": skip_existing,
         "resume": resume,
+        "no_sqlite": no_sqlite,
         "message_ids": _id_list(message_ids),
         "list_channels": list_channels,
         "save_channels": save_channels,
     }
+    if _show_checks(preflight.for_backup(opts) + preflight.validate_backup_opts(opts)):
+        st.stop()
     argv = job_runner.backup_argv(opts)
     job = job_runner.start_job("backup", argv, cwd=REPO_ROOT, opts=opts)
     if job.get("id"):
@@ -145,6 +181,7 @@ if submitted_backup:
 
 with right:
     st.subheader("♻️ Executar restore")
+    _rs_blockers = _show_blockers("restore", {"dry_run": True})
     source = ui.current_source()
     default_backup = source.get("root_path") if source else str(REPO_ROOT / "downloads")
     with st.form("restore_form"):
@@ -175,7 +212,13 @@ with right:
         channel_id = st.text_input(
             "Channel ID (apenas retry)", key="rs_channel", placeholder="-100..."
         )
-        submitted_restore = st.form_submit_button("🚀 Iniciar restore", type="primary")
+        confirm_restore = st.checkbox(
+            "Entendo que um restore real **cria um canal novo** no Telegram",
+            key="rs_confirm",
+        )
+        submitted_restore = st.form_submit_button(
+            "🚀 Iniciar restore", type="primary", disabled=bool(_rs_blockers)
+        )
 
 if submitted_restore:
     opts = {
@@ -191,6 +234,14 @@ if submitted_restore:
         "channel_id": channel_id or None,
         "dry_run": dry_run,
     }
+    if _show_checks(preflight.for_restore(opts) + preflight.validate_restore_opts(opts)):
+        st.stop()
+    if not dry_run and not confirm_restore:
+        st.error(
+            "Marque a confirmação do formulário: um restore real publica no Telegram "
+            "e cria um canal novo."
+        )
+        st.stop()
     argv = job_runner.restore_argv(opts)
     job = job_runner.start_job("restore", argv, cwd=REPO_ROOT, opts=opts)
     if job.get("id"):

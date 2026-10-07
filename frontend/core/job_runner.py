@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from config import LOG_DIR, LOG_TAIL_BYTES, REPO_ROOT
-from core import registry
+from core import envfile, registry
 
 _PROCS: dict[int, subprocess.Popen] = {}
 _HANDLES: dict[int, Any] = {}
@@ -51,6 +51,8 @@ def backup_argv(opts: dict[str, Any]) -> list[str]:
         argv += ["--media-type", media_type]
     if opts.get("skip_existing"):
         argv.append("--skip-existing")
+    if opts.get("no_sqlite"):
+        argv.append("--no-sqlite")
     if not opts.get("resume", True):
         argv.append("--no-resume")
     if opts.get("message_ids"):
@@ -276,22 +278,10 @@ def parse_progress(text: str) -> dict[str, Any]:
 
 def env_preview(path: Path) -> dict[str, str]:
     """Read a ``.env`` file, masking secrets for display."""
-    masked: dict[str, str] = {}
     if not path.exists():
-        return masked
+        return {}
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return masked
-    secret = ("API_HASH", "PHONE", "SESSION_NAME")
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if any(s in key for s in secret) and len(value) > 4:
-            value = value[:2] + "*" * (len(value) - 4) + value[-2:]
-        masked[key] = value
-    return masked
+        return {}
+    return {key: envfile.mask(key, value) for key, value in envfile.parse(text).items()}
