@@ -8,7 +8,7 @@ import streamlit as st
 
 from components import filters as flt, ui
 from config import MEDIA_TYPES, REPO_ROOT
-from core import backend_state, channels, content, envfile, job_runner, preflight, registry, telestat
+from core import backend_state, channels, content, envfile, job_runner, preflight, registry, sessions, telestat
 from core.paths import human_size
 
 st.title("🔌 Backends — backup e restore")
@@ -40,6 +40,13 @@ def _dispatch(
             st.error(item["message"] + (f"\n\n`{item['fix']}`" if item.get("fix") else ""))
         ui.page_link("pages/config.py", label="Abrir Configurações", icon="⚙️")
         return
+
+    # Os jobs rodam com cwd na raiz e resolveriam um SESSION_NAME relativo para
+    # <raiz>/<nome>.session — que pode não ser a sessão autorizada. Passamos a
+    # base autorizada (raiz/backup/restore) como caminho absoluto.
+    session_base = sessions.pick_authorized_base()
+    if session_base:
+        env_extra = {**(env_extra or {}), "SESSION_NAME": session_base}
 
     job = job_runner.start_job(kind, argv, cwd=REPO_ROOT, opts=opts, env_extra=env_extra)
     if not job.get("id"):

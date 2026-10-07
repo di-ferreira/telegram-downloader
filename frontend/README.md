@@ -43,6 +43,7 @@ O servidor sobe em `http://localhost:8501` (apenas local).
 | `core/backend_state.py` | leitura dos artefatos/progresso/logs do backend |
 | `core/channels.py` | canais do `--list-channels`: busca/filtro, pasta por canal, download, fonte, tamanho |
 | `core/telestat.py` | estimativa de tamanho de canais (Telethon, amostra) + cache |
+| `core/sessions.py` | qual `.session` está autorizada (raiz/backup/restore) + `SESSION_NAME` dos jobs |
 | `core/stats.py` | métricas, gráficos, tamanhos de pasta |
 | `core/exports.py` | CSV/JSON/ZIP das mensagens filtradas |
 | `login.py` | CLI de 1º acesso: cria a sessão `.session` do Telethon |

@@ -19,8 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core import envfile, preflight
-from config import REPO_ROOT
+from core import sessions
 
 CACHE_PATH = Path(__file__).resolve().parents[1] / ".cache" / "channel_sizes.json"
 DEFAULT_SAMPLE = 200
@@ -67,55 +66,6 @@ def entity_ref(row: dict[str, str]) -> str | int:
     return int(row.get("id"))
 
 
-def session_bases() -> list[str]:
-    """Bases Telethon (sem ``.session``) candidatas, na ordem de preferência.
-
-    Os jobs do frontend rodam com cwd na raiz (para achar o ``.env``), então um
-    ``SESSION_NAME`` relativo resolve para a raiz — mas o histórico manual do
-    backup vive em ``backup/`` (e o do restore em ``restore/``). Testamos os três
-    e usamos o primeiro que estiver autorizado.
-    """
-    name = Path(envfile.session_name()).name
-    bases = [str(preflight.session_path(name))[: -len(".session")]]
-    bases += [str(folder / name) for folder in (REPO_ROOT / "backup", REPO_ROOT / "restore")]
-    return bases
-
-
-async def _open_client() -> Any:
-    from telethon import TelegramClient  # import local: mantém o módulo leve
-
-    values = envfile.read()
-    api_id = int(values.get("API_ID") or 0)
-    api_hash = (values.get("API_HASH") or "").strip()
-    if not api_id or not api_hash:
-        raise RuntimeError("API_ID/API_HASH ausentes no `.env` — preencha em Configurações.")
-
-    tried: list[Path] = []
-    for base in session_bases():
-        session_file = Path(base + ".session")
-        if not session_file.exists():
-            continue
-        tried.append(session_file)
-        client = TelegramClient(base, api_id, api_hash)
-        authorized = False
-        try:
-            await client.connect()
-            authorized = await client.is_user_authorized()
-        finally:
-            if not authorized:
-                try:
-                    await client.disconnect()
-                except Exception:  # noqa: BLE001 - desconectar quebrado não pode mascarar o erro real
-                    pass
-        if authorized:
-            return client
-
-    if tried:
-        names = ", ".join(f"`{p}`" for p in tried)
-        raise RuntimeError(f"Sessão sem login ({names}) — rode `python frontend/login.py backup`.")
-    raise RuntimeError("Nenhuma sessão `.session` encontrada — rode `python frontend/login.py backup`.")
-
-
 async def _resolve(client: Any, ref: str | int) -> Any:
     try:
         return await client.get_entity(ref)
@@ -132,7 +82,7 @@ async def _resolve(client: Any, ref: str | int) -> Any:
 
 
 async def _estimate(ref: str | int, sample: int) -> dict[str, Any]:
-    client = await _open_client()
+    _, client = await sessions.open_authorized()
     try:
         entity = await _resolve(client, ref)
         total = int((await client.get_messages(entity, limit=0)).total or 0)
