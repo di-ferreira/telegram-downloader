@@ -5,6 +5,7 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+frontend/.cache/
 logs/
 *.session
 **/venv
