@@ -33,13 +33,16 @@ PLACEHOLDERS: dict[str, set[str]] = {
 }
 
 BACKUP_REQUIRED = ("API_ID", "API_HASH", "CHANNEL")
-BACKUP_OPTIONAL = ("OUTPUT_DIR", "CONCURRENT_DOWNLOADS", "SESSION_NAME")
+BACKUP_OPTIONAL = ("OUTPUT_DIR", "OUTPUT_BASE", "CONCURRENT_DOWNLOADS", "SESSION_NAME")
 RESTORE_REQUIRED = ("API_ID", "API_HASH", "PHONE", "CHANNEL_NAME")
 RESTORE_OPTIONAL = ("CHANNEL_DESCRIPTION", "CHANNEL_USERNAME", "BACKUP_FOLDER", "SESSION_NAME")
 
 # Os dois exemplos trazem SESSION_NAME com valores diferentes; como o ``.env``
 # da raiz é único, vale um nome compartilhado (uma autenticação para tudo).
 DEFAULTS: dict[str, str] = {
+    # Base onde ficam as pastas por canal (``OUTPUT_BASE/<título>``). O backend
+    # ignora esta chave — é o frontend quem a usa para montar o OUTPUT_DIR.
+    "OUTPUT_BASE": "downloads",
     "OUTPUT_DIR": "downloads",
     "CONCURRENT_DOWNLOADS": "5",
     "SESSION_NAME": "telegram_session",
@@ -111,6 +114,22 @@ def output_dir() -> Path:
     raw = get("OUTPUT_DIR") or DEFAULTS["OUTPUT_DIR"]
     path = Path(raw)
     return path if path.is_absolute() else (REPO_ROOT / path)
+
+
+def output_base() -> Path:
+    """Folder that holds the per-channel backup folders (``<base>/<título>``)."""
+    raw = get("OUTPUT_BASE") or DEFAULTS["OUTPUT_BASE"]
+    path = Path(raw)
+    return path if path.is_absolute() else (REPO_ROOT / path)
+
+
+def rel_output_dir(path: Path | str) -> str:
+    """``.env``-friendly value for ``OUTPUT_DIR`` (relative to the repo when possible)."""
+    candidate = Path(path)
+    try:
+        return str(candidate.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(candidate)
 
 
 def backup_folder() -> Path:

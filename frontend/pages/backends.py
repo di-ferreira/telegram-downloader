@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from components import ui
+from components import filters as flt, ui
 from config import MEDIA_TYPES, REPO_ROOT
-from core import backend_state, content, envfile, job_runner, preflight, registry
+from core import backend_state, channels, content, envfile, job_runner, preflight, registry
 from core.paths import human_size
 
 st.title("🔌 Backends — backup e restore")
@@ -20,7 +21,12 @@ st.caption(
 # ------------------------------------------------------------ job ativo
 
 
-def _dispatch(kind: str, opts: dict, purpose: str) -> None:
+def _dispatch(
+    kind: str,
+    opts: dict,
+    purpose: str,
+    env_extra: dict[str, str] | None = None,
+) -> None:
     if kind == "backup":
         checks = preflight.for_backup(opts) + preflight.validate_backup_opts(opts)
         argv = job_runner.backup_argv(opts)
@@ -35,7 +41,7 @@ def _dispatch(kind: str, opts: dict, purpose: str) -> None:
         ui.page_link("pages/config.py", label="Abrir Configurações", icon="⚙️")
         return
 
-    job = job_runner.start_job(kind, argv, cwd=REPO_ROOT, opts=opts)
+    job = job_runner.start_job(kind, argv, cwd=REPO_ROOT, opts=opts, env_extra=env_extra)
     if not job.get("id"):
         st.error("Não foi possível iniciar o processo.")
         return
@@ -43,12 +49,78 @@ def _dispatch(kind: str, opts: dict, purpose: str) -> None:
     st.rerun()
 
 
+# ------------------------------------------------------------ download
+
+
+def _download(row: dict) -> None:
+    """Grava ``CHANNEL``/``OUTPUT_DIR`` no ``.env`` e dispara o backup do canal."""
+    values, folder = channels.prepare(row)
+    envfile.write(values)
+    _dispatch(
+        "backup",
+        {
+            "resume": True,
+            "channel_id": str(row.get("id") or ""),
+            "channel_title": row.get("title") or "",
+        },
+        "channel_download",
+        env_extra={
+            "CHANNEL": values["CHANNEL"],
+            "OUTPUT_DIR": str(folder),
+            "OUTPUT_BASE": str(envfile.output_base()),
+        },
+    )
+
+
+def _register_download(args: dict) -> None:
+    """Ao concluir um download: registra a pasta como fonte e indexa o canal."""
+    channel_id = str(args.get("channel_id") or "")
+    row = next((r for r in channels.rows() if str(r.get("id")) == channel_id), None)
+    if row is None:
+        return
+    label = row.get("title") or channel_id
+    try:
+        source = channels.ensure_source(row)
+        if not source:
+            st.session_state["channels_download_error"] = (
+                f"Pasta de `{label}` não tem `backup.db` nem `messages.json`."
+            )
+            return
+        if not source.get("last_scanned_at"):
+            with st.spinner(f"Indexando `{label}`..."):
+                channels.scan(source)
+        st.session_state["source_id"] = int(source["id"])
+        st.session_state["channels_download_ready"] = label
+    except Exception as exc:  # noqa: BLE001 - quebrar a página aqui esconderia o log
+        st.session_state["channels_download_error"] = f"`{label}`: {exc}"
+
+
 _active = st.session_state.get("backend_job")
 _poll = None
+_row: dict = {}
+_args: dict = {}
 if _active:
     _row = registry.get_job(int(_active["id"])) or {}
     if _row.get("status") in ("running", "queued"):
         _poll = 2.0
+    try:
+        _args = json.loads(_row.get("args") or "{}")
+    except (TypeError, ValueError):
+        _args = {}
+
+_purpose = (_active or {}).get("purpose")
+_downloading_id = str(_args.get("channel_id") or "") if _purpose == "channel_download" else ""
+_backup_busy = _row.get("kind") == "backup" and _row.get("status") in ("running", "queued")
+
+if (
+    _active
+    and _purpose == "channel_download"
+    and _row.get("status") == "succeeded"
+    and st.session_state.get("channels_registered_job") != int(_active["id"])
+):
+    st.session_state["channels_registered_job"] = int(_active["id"])
+    _register_download(_args)
+    st.rerun()
 
 
 @st.fragment(run_every=_poll)
@@ -94,10 +166,76 @@ _active_job_fragment()
 st.markdown("---")
 st.subheader("📡 Canais acessíveis")
 
-canais = backend_state.saved_channels()
-if canais:
-    table = pd.DataFrame(canais)
-    st.dataframe(table, hide_index=True, width="stretch")
+if _ready := st.session_state.pop("channels_download_ready", None):
+    st.success(f"✅ `{_ready}` baixado, indexado e selecionado na barra lateral.")
+if _error := st.session_state.pop("channels_download_error", None):
+    st.error(_error)
+
+canais = channels.rows()
+if not canais:
+    st.info(
+        "Nada em `backup/channels.txt` — use **📡 Listar canais agora** (abaixo) "
+        "para descobrir os canais acessíveis."
+    )
+else:
+    CH_PAGE_SIZE = 25
+    page = flt.render_pagination(len(canais), flt.get_page("ch"), CH_PAGE_SIZE, prefix="ch")
+    inicio = (page - 1) * CH_PAGE_SIZE
+
+    h1, h2, h3, h4, h5 = st.columns([2, 1, 2.5, 4, 3])
+    h1.caption("**ID**")
+    h2.caption("**Type**")
+    h3.caption("**Username**")
+    h4.caption("**Title**")
+    h5.caption("**Download**")
+
+    for row in canais[inicio : inicio + CH_PAGE_SIZE]:
+        c1, c2, c3, c4, c5 = st.columns([2, 1, 2.5, 4, 3])
+        with c1:
+            st.caption(f"`{row['id']}`")
+        with c2:
+            st.caption(row["type"])
+        with c3:
+            st.caption(row["username"])
+        with c4:
+            st.markdown(f"**{row['title'] or '(sem título)'}**")
+        with c5:
+            if _downloading_id == str(row["id"]):
+                st.caption("⏳ baixando…")
+                continue
+            baixado, fonte = channels.is_downloaded(row)
+            if not baixado:
+                if st.button(
+                    "⬇️ Baixar",
+                    key=f"ch_dl_{row['id']}",
+                    width="stretch",
+                    disabled=_backup_busy,
+                    help="Grava `CHANNEL`/`OUTPUT_DIR` no `.env` e baixa este canal "
+                    "para `OUTPUT_BASE/<título>`.",
+                ):
+                    _download(row)
+                continue
+            if fonte is None:
+                # pasta com conteúdo que ainda não virou fonte (ex.: cópia manual)
+                with st.spinner(f"Registrando `{row['title'] or row['id']}`..."):
+                    fonte = channels.ensure_source(row)
+                    if fonte and not fonte.get("last_scanned_at"):
+                        channels.scan(fonte)
+                if fonte:
+                    st.rerun()
+                st.caption("⚠️ pasta sem `backup.db`/`messages.json` indexável.")
+                continue
+            qparams = {"source": str(fonte["id"])}
+            g, p = st.columns(2)
+            with g:
+                ui.page_link("pages/gallery.py", "🖼️ Galeria", query_params=qparams)
+            with p:
+                ui.page_link("pages/player.py", "▶️ Reprodutor", query_params=qparams)
+
+    flt.render_pagination(
+        len(canais), page, CH_PAGE_SIZE, prefix="ch", instance="bottom"
+    )
+
     opcoes = {
         f"{row['title'] or '(sem título)'} · {row['username']} · {row['id']}": row["id"]
         for row in canais

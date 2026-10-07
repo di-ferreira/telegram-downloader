@@ -41,6 +41,7 @@ O servidor sobe em `http://localhost:8501` (apenas local).
 | `core/envfile.py` | `.env` da raiz: ler, mascarar, merge atômico + `.env.bak` |
 | `core/preflight.py` | checagens pré-job (`.env`, dependências, sessão, pasta) |
 | `core/backend_state.py` | leitura dos artefatos/progresso/logs do backend |
+| `core/channels.py` | canais do `--list-channels`: pasta por canal, download, fonte |
 | `core/stats.py` | métricas, gráficos, tamanhos de pasta |
 | `core/exports.py` | CSV/JSON/ZIP das mensagens filtradas |
 | `login.py` | CLI de 1º acesso: cria a sessão `.session` do Telethon |
@@ -55,8 +56,10 @@ O servidor sobe em `http://localhost:8501` (apenas local).
 - **Reprodutor** — fila, retoma do último ponto, progresso salvo (≥95% = assistido).
 - **Fontes** — adicionar/procurar/escanear/re-escanear pastas de backup.
 - **Backup & Restore** — formulários com opções do CLI, log ao vivo e cancelamento.
-- **Backends** — canais disponíveis, saídas do backup, simulação (dry-run),
-  progresso real do restore e logs.
+- **Backends** — canais acessíveis com **coluna Download** (⬇️ baixa o canal —
+  grava `CHANNEL`/`OUTPUT_DIR` no `.env` e salva em `OUTPUT_BASE/<título>` — ou
+  abre 🖼️ Galeria / ▶️ Reprodutor quando já baixado), saídas do backup,
+  simulação (dry-run), progresso real do restore e logs.
 - **Configurações** — status de `.env`/dependências/sessão e os forms para
   preencher as credenciais.
 

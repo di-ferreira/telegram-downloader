@@ -6,7 +6,12 @@ from streamlit.errors import StreamlitPageNotFoundError
 from core import registry
 
 
-def page_link(page: str, label: str, icon: str | None = None) -> None:
+def page_link(
+    page: str,
+    label: str,
+    icon: str | None = None,
+    query_params: dict | None = None,
+) -> None:
     """Navega para outra página, degradando para legenda fora da navegação.
 
     ``st.page_link`` só aceita páginas registradas em ``st.navigation``; num
@@ -14,12 +19,31 @@ def page_link(page: str, label: str, icon: str | None = None) -> None:
     ``StreamlitPageNotFoundError``, então ali o link vira texto simples.
     """
     try:
-        st.page_link(page, label=label, icon=icon)
+        if query_params:
+            st.page_link(page, label=label, icon=icon, query_params=query_params)
+        else:
+            st.page_link(page, label=label, icon=icon)
     except StreamlitPageNotFoundError:
         st.caption(f"{(icon + ' ') if icon else ''}{label}")
 
 
+def _apply_source_param() -> None:
+    """Deep link ``?source=<id>`` — one-shot: selects the source and clears the
+    parameter so the sidebar selector stays free afterwards."""
+    raw = st.query_params.get("source")
+    if not raw:
+        return
+    del st.query_params["source"]
+    try:
+        source_id = int(raw)
+    except (TypeError, ValueError):
+        return
+    if registry.get_source(source_id):
+        st.session_state["source_id"] = source_id
+
+
 def current_source() -> dict | None:
+    _apply_source_param()
     return registry.get_source(st.session_state.get("source_id"))
 
 
